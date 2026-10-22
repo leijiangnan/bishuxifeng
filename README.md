@@ -1,11 +1,30 @@
-# 记忆承载文章库
+# 微信公众号文章库
 
-本项目保存“记忆承载”和“记忆承载3”两个公众号的文章清单、正文与本地索引。
+本项目保存多个微信作者的文章清单、正文与本地索引。当前维护“记忆承载”和“猫笔刀”两位作者。
 
 ## 文章管理页
 
-管理页将两份 Excel 作为历史基线，并通过本机微信 4.x 的公众号消息数据库持续发现新文章。
-它提供文章检索、原文跳转、归档状态筛选和本地下载。
+管理页通过 `config/authors.json` 管理作者与公众号映射，将各作者数据隔离保存，并通过本机微信 4.x 的公众号消息数据库持续发现新文章。页面提供作者、公众号、年份和归档状态筛选。
+
+核心目录：
+
+```text
+config/authors.json
+data/
+  authors/
+    jiyichengzai/
+      articles/
+      index/
+      reports/
+      sources/
+    maobidao/
+      articles/
+      html/
+      index/
+      reports/
+      sources/
+  catalog/articles.csv
+```
 
 安装 Python 依赖：
 
@@ -54,9 +73,10 @@ http://127.0.0.1:8765
 
 服务启动时、运行期间每 30 分钟以及点击“同步目录”时，都会执行：
 
-1. 通过 `wx biz-articles` 读取本机微信已经收到的公众号文章推送。
-2. 仅保留“记忆承载”和“记忆承载3”，并写入 `data/wechat_articles.csv`。
-3. 将微信增量与历史 Excel 去重合并后展示在页面中。
+1. 按 `config/authors.json` 中的公众号 `gh_*` 标识读取本机微信推送。
+2. 将增量分别写入 `data/authors/<author_id>/sources/wechat_articles.csv`。
+3. 将各作者的微信增量与历史导入数据去重合并。
+4. 生成全局汇总索引 `data/catalog/articles.csv`，供页面跨作者查询。
 
 这种方式不需要公众号后台权限，数据直接来自你的本机微信。它只能同步微信已经接收并落入
 本地数据库的推送；如果微信长期未登录、取消关注或本地记录已被清理，对应文章不会出现。
@@ -69,15 +89,19 @@ ARTICLE_LIBRARY_REFRESH_SECONDS=3600 \
 python3 scripts/article_library_server.py
 ```
 
-下载成功后会同步更新：
+每个作者的下载结果独立保存：
 
-- `data/articles/记忆承载/<年份>/`
-- `data/articles_index.csv`
-- `data/download_report_<年份>.csv`
+- 正文：`data/authors/<author_id>/articles/<年份>/`
+- HTML 快照：`data/authors/<author_id>/html/<年份>/`
+- 索引：`data/authors/<author_id>/index/articles.csv`
+- 状态：`data/authors/<author_id>/index/download_status.csv`
+- 报告：`data/authors/<author_id>/reports/`
 
-下载失败会写入 `data/download_failed_<年份>.csv`，不会静默忽略。
+猫笔刀文章包含较多配图，下载时采用双存储：`articles/<年份>/` 保存 Markdown
+正文，`html/<年份>/` 保存带原始图文结构的 HTML 快照。记忆承载历史文章仍沿用
+TXT 正文，避免大规模改写既有语料。
 
-批量下载状态会写入 `data/article_download_status.csv`：
+下载状态包括：
 
 - `paid`：微信页面明确标识为付费内容，或外层引导页指向已验证的付费源文章；只在页面标记，不下载正文。
 - `failed`：文章已删除、页面失效、触发微信验证或正文不可公开访问。
@@ -85,8 +109,12 @@ python3 scripts/article_library_server.py
 页面可按“已归档 / 待下载 / 付费 / 失败”筛选。批量下载只处理“待下载”，不会反复请求
 已经标记为付费或失败的文章。
 
-当微信数据读取权限不足时，服务仍会使用 Excel 和已缓存的
-`data/wechat_articles.csv` 正常展示历史文章，并在页面顶部提示“微信待授权”。
+当微信数据读取权限不足时，服务仍会使用各作者已缓存的 `sources/wechat_articles.csv` 正常展示历史文章，并在页面顶部提示“微信待授权”。
+
+当前可获取范围：
+
+- 记忆承载：4,601 条目录记录。
+- 猫笔刀：仅保留 2026-10-07 及之后的 15 条目录记录；其中 13 篇已归档为 Markdown 和 HTML，2 篇已隐藏或不可公开查看。
 
 ## 测试
 

@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>记忆承载 · 文章库</title>
+  <title>微信公众号文章库</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true">记</div>
+      <div class="brand-mark" aria-hidden="true">文</div>
       <div>
-        <h1>记忆承载</h1>
-        <p>双公众号文章库</p>
+        <h1>微信公众号文章库</h1>
+        <p>多作者本地知识工程</p>
       </div>
     </div>
     <div class="topbar-actions">
@@ -31,7 +31,7 @@
         <div class="summary-copy">
           <p class="eyebrow">LOCAL ARCHIVE</p>
           <h2>文章链接与本地归档</h2>
-          <p>共维护两个公众号的公开文章记录。</p>
+          <p>集中管理多个作者及其公众号文章。</p>
         </div>
         <dl class="metrics">
           <div>
@@ -62,6 +62,12 @@
           <input id="searchInput" type="search" placeholder="搜索标题或摘要" autocomplete="off">
         </label>
         <div class="filters">
+          <label>
+            <span class="sr-only">作者</span>
+            <select id="authorFilter" aria-label="按作者筛选">
+              <option value="all">全部作者</option>
+            </select>
+          </label>
           <label>
             <span class="sr-only">公众号</span>
             <select id="accountFilter" aria-label="按公众号筛选">
@@ -98,6 +104,7 @@
             <tr>
               <th class="date-column">日期</th>
               <th>文章</th>
+              <th class="author-column">作者</th>
               <th class="account-column">公众号</th>
               <th class="status-column">状态</th>
               <th class="action-column"><span class="sr-only">操作</span></th>

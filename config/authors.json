@@ -1,0 +1,43 @@
+{
+  "authors": [
+    {
+      "id": "jiyichengzai",
+      "name": "记忆承载",
+      "sync_since": "2026-08-13",
+      "accounts": [
+        {
+          "id": "jiyichengzai",
+          "name": "记忆承载",
+          "username": "gh_e4d226f07619",
+          "biz": "MzU0MjYwNDU2Mw=="
+        },
+        {
+          "id": "jiyichengzai3",
+          "name": "记忆承载3",
+          "username": "gh_0a7d5b8bdb94",
+          "biz": "MzU3NDc5Nzc0NQ=="
+        }
+      ],
+      "paid_source_biz_ids": [
+        "MzY5MDQxMDY1Ng=="
+      ]
+    },
+    {
+      "id": "maobidao",
+      "name": "猫笔刀",
+      "sync_since": "2026-10-07",
+      "accounts": [
+        {
+          "id": "maobidao",
+          "name": "猫笔刀",
+          "username": "gh_ef5739a9d493",
+          "biz": "MzE5ODk2NjUwOA=="
+        }
+      ],
+      "seed_urls": [
+        "https://mp.weixin.qq.com/s/wOoNITMn36J2n3MKIj2y-A"
+      ],
+      "paid_source_biz_ids": []
+    }
+  ]
+}

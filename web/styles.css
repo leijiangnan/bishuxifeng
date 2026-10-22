@@ -354,7 +354,11 @@ tbody tr:hover {
 }
 
 .account-column {
-  width: 130px;
+  width: 110px;
+}
+
+.author-column {
+  width: 110px;
 }
 
 .status-column {
@@ -714,6 +718,10 @@ tbody tr:hover {
   .account-column {
     display: none;
   }
+
+  .author-column {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {
@@ -842,6 +850,10 @@ tbody tr:hover {
   }
 
   .account-cell {
+    display: none;
+  }
+
+  .author-cell {
     display: none;
   }
 

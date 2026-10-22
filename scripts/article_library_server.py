@@ -33,8 +33,12 @@ from bs4 import BeautifulSoup
 LOGGER = logging.getLogger("article-library")
 CSV_LOCK = threading.RLock()
 WECHAT_HOSTS = {"mp.weixin.qq.com"}
+DUAL_STORAGE_AUTHOR_IDS = {"maobidao"}
 INDEX_FIELDS = [
+    "author_id",
+    "author_name",
     "account",
+    "account_username",
     "title",
     "date",
     "url",
@@ -45,10 +49,56 @@ INDEX_FIELDS = [
     "sha256",
 ]
 REPORT_FIELDS = INDEX_FIELDS
-FAILED_FIELDS = ["account", "title", "date", "url", "source_excel", "source_row", "error"]
-DOWNLOAD_STATUS_FIELDS = ["account", "title", "date", "url", "status", "error", "updated_at"]
-WECHAT_CACHE_FIELDS = ["account", "title", "date", "url", "summary", "source_file", "source_row"]
-TARGET_ACCOUNTS = {"记忆承载", "记忆承载3"}
+FAILED_FIELDS = [
+    "author_id",
+    "author_name",
+    "account",
+    "account_username",
+    "title",
+    "date",
+    "url",
+    "source_excel",
+    "source_row",
+    "error",
+]
+DOWNLOAD_STATUS_FIELDS = [
+    "author_id",
+    "author_name",
+    "account",
+    "account_username",
+    "title",
+    "date",
+    "url",
+    "status",
+    "error",
+    "updated_at",
+]
+WECHAT_CACHE_FIELDS = [
+    "author_id",
+    "author_name",
+    "account",
+    "account_username",
+    "title",
+    "date",
+    "url",
+    "summary",
+    "source_file",
+    "source_row",
+]
+CATALOG_FIELDS = [
+    "author_id",
+    "author_name",
+    "account",
+    "account_username",
+    "title",
+    "date",
+    "url",
+    "summary",
+    "status",
+    "local_path",
+    "source_file",
+    "source_row",
+]
 # 已在微信页面验证为付费内容源的公众号。MzY5MDQxMDY1Ng== 对应“西风的指南”。
 PAID_SOURCE_BIZ_IDS = {"MzY5MDQxMDY1Ng=="}
 REQUEST_HEADERS = {
@@ -90,12 +140,15 @@ def normalize_wechat_url(value: str) -> str:
     return urlunparse(("https", parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
 
 
-def is_paid_source_url(value: str) -> bool:
+def is_paid_source_url(
+    value: str,
+    paid_source_biz_ids: set[str] | frozenset[str] = frozenset(PAID_SOURCE_BIZ_IDS),
+) -> bool:
     parsed = urlparse(normalize_wechat_url(value))
     if parsed.hostname not in WECHAT_HOSTS:
         return False
     biz_values = parse_qs(parsed.query).get("__biz", [])
-    return any(unquote(value) in PAID_SOURCE_BIZ_IDS for value in biz_values)
+    return any(unquote(value) in paid_source_biz_ids for value in biz_values)
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -138,6 +191,106 @@ def extract_text(soup: BeautifulSoup, selector: str) -> str:
     return node.get_text("\n", strip=True) if node else ""
 
 
+def article_content_node(soup: BeautifulSoup) -> Any:
+    return soup.select_one("#js_content") or soup.select_one(".rich_media_content")
+
+
+def normalize_content_images(node: Any) -> None:
+    for image in node.select("img"):
+        source = image.get("data-src") or image.get("src") or ""
+        if source:
+            image["src"] = html.unescape(source)
+        if not image.get("alt"):
+            image["alt"] = "图片"
+
+
+def content_as_markdown(node: Any) -> str:
+    document = BeautifulSoup(str(node), "html.parser")
+    normalize_content_images(document)
+    for image in document.select("img"):
+        source = image.get("src", "").strip()
+        alt = image.get("alt", "图片").strip() or "图片"
+        image.replace_with(f"\n\n![{alt}]({source})\n\n" if source else "")
+    for line_break in document.select("br"):
+        line_break.replace_with("\n")
+    text = document.get_text("\n", strip=True)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def content_as_html(node: Any) -> str:
+    document = BeautifulSoup(str(node), "html.parser")
+    normalize_content_images(document)
+    return document.decode_contents().strip()
+
+
+def markdown_document(
+    item: "InventoryArticle",
+    title: str,
+    published_date: str,
+    content: str,
+) -> str:
+    return "\n".join(
+        [
+            f"# {title.strip()}",
+            "",
+            f"- 作者: {item.author_name}",
+            f"- 公众号: {item.account}",
+            f"- 日期: {published_date}",
+            f"- URL: {item.url}",
+            f"- 来源文件: {item.source_file}",
+            f"- 来源文章序号: {item.source_row}",
+            "",
+            content.strip(),
+            "",
+        ]
+    )
+
+
+def html_document(
+    item: "InventoryArticle",
+    title: str,
+    published_date: str,
+    content: str,
+) -> str:
+    escaped_title = html.escape(title.strip())
+    return "\n".join(
+        [
+            "<!doctype html>",
+            '<html lang="zh-CN">',
+            "<head>",
+            '  <meta charset="utf-8">',
+            '  <meta name="viewport" content="width=device-width, initial-scale=1">',
+            f"  <title>{escaped_title}</title>",
+            "  <style>",
+            "    body{margin:0;background:#f7f7f7;color:#1f2329;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.75;}",
+            "    main{max-width:760px;margin:0 auto;background:#fff;min-height:100vh;padding:32px 22px;box-sizing:border-box;}",
+            "    h1{font-size:26px;line-height:1.35;margin:0 0 14px;}",
+            "    .meta{color:#646a73;font-size:14px;margin-bottom:28px;}",
+            "    .content img{max-width:100%;height:auto;display:block;margin:14px auto;}",
+            "    .content p{margin:0 0 1em;}",
+            "    .content #js_content{visibility:visible!important;opacity:1!important;}",
+            "  </style>",
+            "</head>",
+            "<body>",
+            "  <main>",
+            f"    <h1>{escaped_title}</h1>",
+            "    <div class=\"meta\">",
+            f"      作者: {html.escape(item.author_name)}<br>",
+            f"      公众号: {html.escape(item.account)}<br>",
+            f"      日期: {html.escape(published_date)}<br>",
+            f"      URL: <a href=\"{html.escape(item.url, quote=True)}\">{html.escape(item.url)}</a><br>",
+            f"      来源文件: {html.escape(item.source_file)} / {html.escape(str(item.source_row))}",
+            "    </div>",
+            f"    <article class=\"content\">{content}</article>",
+            "  </main>",
+            "</body>",
+            "</html>",
+            "",
+        ]
+    )
+
+
 def original_article_url(page_html: str) -> str:
     soup = BeautifulSoup(page_html, "html.parser")
     node = soup.select_one("#js_share_source[data-url]")
@@ -173,7 +326,10 @@ class PaidArticleError(Exception):
 @dataclass(frozen=True)
 class InventoryArticle:
     id: str
+    author_id: str
+    author_name: str
     account: str
+    account_username: str
     title: str
     date: str
     url: str
@@ -182,15 +338,54 @@ class InventoryArticle:
     source_row: int
 
 
+@dataclass(frozen=True)
+class AuthorConfig:
+    id: str
+    name: str
+    sync_since: str
+    accounts: tuple[dict[str, str], ...]
+    paid_source_biz_ids: frozenset[str]
+
+    @property
+    def account_names(self) -> set[str]:
+        return {account["name"] for account in self.accounts}
+
+    @property
+    def account_usernames(self) -> set[str]:
+        return {account["username"] for account in self.accounts}
+
+    def account_by_name(self, name: str) -> dict[str, str] | None:
+        return next((account for account in self.accounts if account["name"] == name), None)
+
+    def account_by_username(self, username: str) -> dict[str, str] | None:
+        return next(
+            (account for account in self.accounts if account["username"] == username),
+            None,
+        )
+
+
 class ArticleLibrary:
     def __init__(self, project_root: Path, refresh_seconds: int = 1800) -> None:
         self.project_root = project_root.resolve()
         self.data_dir = self.project_root / "data"
         self.web_dir = self.project_root / "web"
-        self.index_path = self.data_dir / "articles_index.csv"
-        self.download_status_path = self.data_dir / "article_download_status.csv"
-        self.wechat_cache_path = self.data_dir / "wechat_articles.csv"
-        self.articles_dir = self.data_dir / "articles" / "记忆承载"
+        self.config_path = self.project_root / "config" / "authors.json"
+        self.catalog_path = self.data_dir / "catalog" / "articles.csv"
+        self.authors = self._load_authors()
+        self.authors_by_id = {author.id: author for author in self.authors}
+        self.author_by_username = {
+            account["username"]: author
+            for author in self.authors
+            for account in author.accounts
+        }
+        self.author_by_account_name = {
+            account["name"]: author
+            for author in self.authors
+            for account in author.accounts
+        }
+        self.paid_source_biz_ids = frozenset(
+            biz for author in self.authors for biz in author.paid_source_biz_ids
+        )
         self.refresh_seconds = max(refresh_seconds, 60)
         self._lock = threading.RLock()
         self._articles: list[InventoryArticle] = []
@@ -206,80 +401,150 @@ class ArticleLibrary:
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="article-download")
         self._stop_event = threading.Event()
 
+    def _load_authors(self) -> tuple[AuthorConfig, ...]:
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"作者配置不存在: {self.config_path}")
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        authors: list[AuthorConfig] = []
+        for raw in payload.get("authors", []):
+            author_id = str(raw.get("id", "")).strip()
+            name = str(raw.get("name", "")).strip()
+            accounts = tuple(raw.get("accounts", []))
+            if not author_id or not name or not accounts:
+                raise ValueError(f"作者配置不完整: {raw}")
+            authors.append(
+                AuthorConfig(
+                    id=author_id,
+                    name=name,
+                    sync_since=normalize_date(raw.get("sync_since", "")),
+                    accounts=accounts,
+                    paid_source_biz_ids=frozenset(raw.get("paid_source_biz_ids", [])),
+                )
+            )
+        if not authors:
+            raise ValueError("authors.json 中没有作者配置")
+        return tuple(authors)
+
+    def _author_dir(self, author_id: str) -> Path:
+        return self.data_dir / "authors" / author_id
+
+    def _index_path(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "index" / "articles.csv"
+
+    def _status_path(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "index" / "download_status.csv"
+
+    def _wechat_cache_path(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "sources" / "wechat_articles.csv"
+
+    def _articles_dir(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "articles"
+
+    def _html_dir(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "html"
+
+    def _reports_dir(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "reports"
+
     def load_inventory(self) -> dict[str, Any]:
         articles: list[InventoryArticle] = []
         seen_urls: set[str] = set()
-        seen_titles: set[tuple[str, str]] = set()
+        seen_titles: set[tuple[str, str, str]] = set()
         source_counts: dict[str, int] = {}
+        author_counts: dict[str, int] = {}
 
         def append_article(current: InventoryArticle) -> None:
-            title_key = (current.account, normalize_title(current.title))
+            title_key = (
+                current.author_id,
+                current.account,
+                normalize_title(current.title),
+            )
             if current.url in seen_urls or title_key in seen_titles:
                 return
             articles.append(current)
             seen_urls.add(current.url)
             seen_titles.add(title_key)
             source_counts[current.account] = source_counts.get(current.account, 0) + 1
+            author_counts[current.author_id] = author_counts.get(current.author_id, 0) + 1
 
-        for excel_path in sorted(self.data_dir.glob("*.xlsx")):
-            workbook = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
-            try:
-                for sheet in workbook.worksheets:
-                    rows = sheet.iter_rows(values_only=True)
-                    try:
-                        header = next(rows)
-                    except StopIteration:
-                        continue
-                    columns = {str(value).strip(): index for index, value in enumerate(header) if value is not None}
-                    if not {"公众号", "标题", "发布时间", "链接"}.issubset(columns):
-                        continue
-                    for row_number, row in enumerate(rows, 2):
-                        def cell(name: str) -> Any:
-                            index = columns.get(name, -1)
-                            return row[index] if 0 <= index < len(row) else ""
-
-                        title = str(cell("标题") or "").strip()
-                        url = normalize_wechat_url(str(cell("链接") or "").strip())
-                        parsed = urlparse(url)
-                        if not title or parsed.hostname not in WECHAT_HOSTS or url in seen_urls:
+        for author in self.authors:
+            imports_dir = self._author_dir(author.id) / "sources" / "imports"
+            for excel_path in sorted(imports_dir.glob("*.xlsx")):
+                workbook = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+                try:
+                    for sheet in workbook.worksheets:
+                        rows = sheet.iter_rows(values_only=True)
+                        try:
+                            header = next(rows)
+                        except StopIteration:
                             continue
-                        account = str(cell("公众号") or excel_path.stem).strip()
-                        current = InventoryArticle(
-                            id=article_id(url),
-                            account=account,
-                            title=title,
-                            date=normalize_date(cell("发布时间")),
-                            url=url,
-                            summary=str(cell("摘要") or "").strip(),
-                            source_file=excel_path.name,
-                            source_row=row_number,
-                        )
-                        append_article(current)
-            finally:
-                workbook.close()
+                        columns = {
+                            str(value).strip(): index
+                            for index, value in enumerate(header)
+                            if value is not None
+                        }
+                        if not {"公众号", "标题", "发布时间", "链接"}.issubset(columns):
+                            continue
+                        for row_number, row in enumerate(rows, 2):
+                            def cell(name: str) -> Any:
+                                index = columns.get(name, -1)
+                                return row[index] if 0 <= index < len(row) else ""
 
-        for row_number, row in enumerate(read_csv(self.wechat_cache_path), 2):
-            title = str(row.get("title", "")).strip()
-            url = normalize_wechat_url(str(row.get("url", "")).strip())
-            account = str(row.get("account", "")).strip()
-            if (
-                not title
-                or account not in TARGET_ACCOUNTS
-                or urlparse(url).hostname not in WECHAT_HOSTS
-            ):
-                continue
-            append_article(
-                InventoryArticle(
-                    id=article_id(url),
-                    account=account,
-                    title=title,
-                    date=normalize_date(row.get("date", "")),
-                    url=url,
-                    summary=str(row.get("summary", "")).strip(),
-                    source_file=str(row.get("source_file", "")).strip() or "本机微信",
-                    source_row=int(row.get("source_row", 0) or row_number),
+                            title = str(cell("标题") or "").strip()
+                            url = normalize_wechat_url(str(cell("链接") or "").strip())
+                            account_name = str(cell("公众号") or excel_path.stem).strip()
+                            account = author.account_by_name(account_name)
+                            if (
+                                not title
+                                or not account
+                                or urlparse(url).hostname not in WECHAT_HOSTS
+                            ):
+                                continue
+                            append_article(
+                                InventoryArticle(
+                                    id=article_id(url),
+                                    author_id=author.id,
+                                    author_name=author.name,
+                                    account=account["name"],
+                                    account_username=account["username"],
+                                    title=title,
+                                    date=normalize_date(cell("发布时间")),
+                                    url=url,
+                                    summary=str(cell("摘要") or "").strip(),
+                                    source_file=excel_path.name,
+                                    source_row=row_number,
+                                )
+                            )
+                finally:
+                    workbook.close()
+
+            cache_path = self._wechat_cache_path(author.id)
+            for row_number, row in enumerate(read_csv(cache_path), 2):
+                title = str(row.get("title", "")).strip()
+                url = normalize_wechat_url(str(row.get("url", "")).strip())
+                account_name = str(row.get("account", "")).strip()
+                account_username = str(row.get("account_username", "")).strip()
+                account = (
+                    author.account_by_username(account_username)
+                    or author.account_by_name(account_name)
                 )
-            )
+                if not title or not account or urlparse(url).hostname not in WECHAT_HOSTS:
+                    continue
+                append_article(
+                    InventoryArticle(
+                        id=article_id(url),
+                        author_id=author.id,
+                        author_name=author.name,
+                        account=account["name"],
+                        account_username=account["username"],
+                        title=title,
+                        date=normalize_date(row.get("date", "")),
+                        url=url,
+                        summary=str(row.get("summary", "")).strip(),
+                        source_file=str(row.get("source_file", "")).strip() or "本机微信",
+                        source_row=int(row.get("source_row", 0) or row_number),
+                    )
+                )
 
         articles.sort(key=lambda item: (item.date, item.source_row), reverse=True)
         refreshed_at = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -287,14 +552,21 @@ class ArticleLibrary:
             self._articles = articles
             self._by_id = {item.id: item for item in articles}
             self._last_refresh = refreshed_at
+        self._write_catalog(articles)
 
         LOGGER.info(
-            "文章目录同步完成, total:%d, accounts:%s, refreshed_at:%s",
+            "文章目录同步完成, total:%d, authors:%s, accounts:%s, refreshed_at:%s",
             len(articles),
+            author_counts,
             source_counts,
             refreshed_at,
         )
-        return {"total": len(articles), "accounts": source_counts, "refreshed_at": refreshed_at}
+        return {
+            "total": len(articles),
+            "authors": author_counts,
+            "accounts": source_counts,
+            "refreshed_at": refreshed_at,
+        }
 
     def sync_from_wechat(self) -> dict[str, Any]:
         wx_path = shutil.which("wx")
@@ -311,17 +583,46 @@ class ArticleLibrary:
             LOGGER.warning("微信文章同步跳过, reason:%s", result["warning"])
             return result
 
-        command = [wx_path, "biz-articles", "-n", "10000", "--json"]
-        LOGGER.info("开始同步本机微信公众号文章, accounts:%s", sorted(TARGET_ACCOUNTS))
+        LOGGER.info(
+            "开始同步本机微信公众号文章, authors:%s",
+            [author.id for author in self.authors],
+        )
+        raw_items: list[dict[str, Any]] = []
         try:
-            completed = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=90,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            for author in self.authors:
+                for account in author.accounts:
+                    command = [
+                        wx_path,
+                        "biz-articles",
+                        "--account",
+                        account["username"],
+                        "-n",
+                        "10000",
+                        "--json",
+                    ]
+                    completed = subprocess.run(
+                        command,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=90,
+                    )
+                    if completed.returncode != 0:
+                        detail = (
+                            completed.stderr or completed.stdout or "未知错误"
+                        ).strip().splitlines()[-1]
+                        if "Operation not permitted" in detail:
+                            detail = "macOS 未授权当前应用读取微信数据，请授予完全磁盘访问权限"
+                        raise RuntimeError(detail)
+                    payload = self._parse_wx_json(completed.stdout)
+                    raw_items.extend(self._wx_items(payload))
+        except (
+            OSError,
+            subprocess.TimeoutExpired,
+            RuntimeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
             result = {
                 "available": False,
                 "synced": 0,
@@ -333,52 +634,36 @@ class ArticleLibrary:
             LOGGER.warning("微信文章同步失败, error:%s", exc)
             return result
 
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "未知错误").strip().splitlines()[-1]
-            if "Operation not permitted" in detail:
-                detail = "macOS 未授权当前应用读取微信数据，请授予完全磁盘访问权限"
-            result = {
-                "available": False,
-                "synced": 0,
-                "last_sync": synced_at,
-                "warning": detail,
+        caches = {
+            author.id: read_csv(self._wechat_cache_path(author.id))
+            for author in self.authors
+        }
+        by_url = {
+            author_id: {
+                row.get("url", ""): row
+                for row in rows
+                if row.get("url")
             }
-            with self._lock:
-                self._wechat_sync = result
-            LOGGER.warning(
-                "微信文章同步失败, return_code:%d, error:%s",
-                completed.returncode,
-                detail,
-            )
-            return result
-
-        try:
-            payload = self._parse_wx_json(completed.stdout)
-            raw_items = self._wx_items(payload)
-        except (ValueError, json.JSONDecodeError) as exc:
-            result = {
-                "available": False,
-                "synced": 0,
-                "last_sync": synced_at,
-                "warning": f"wx-cli 返回数据无法解析：{exc}",
-            }
-            with self._lock:
-                self._wechat_sync = result
-            LOGGER.warning("微信文章同步解析失败, error:%s", exc)
-            return result
-
-        cached = read_csv(self.wechat_cache_path)
-        by_url = {row.get("url", ""): row for row in cached if row.get("url")}
-        matched = 0
+            for author_id, rows in caches.items()
+        }
+        matched_by_author = {author.id: 0 for author in self.authors}
         for item in raw_items:
-            account = str(item.get("account", "")).strip()
+            account_name = str(item.get("account", "")).strip()
+            account_username = str(item.get("account_username", "")).strip()
+            author = self.author_by_username.get(account_username)
+            if not author:
+                author = self.author_by_account_name.get(account_name)
+            if not author:
+                continue
+            account = (
+                author.account_by_username(account_username)
+                or author.account_by_name(account_name)
+            )
+            if not account:
+                continue
             title = str(item.get("title", "")).strip()
             url = normalize_wechat_url(str(item.get("url", "")).strip())
-            if (
-                account not in TARGET_ACCOUNTS
-                or not title
-                or urlparse(url).hostname not in WECHAT_HOSTS
-            ):
+            if not title or urlparse(url).hostname not in WECHAT_HOSTS:
                 continue
             timestamp = item.get("timestamp") or item.get("time") or ""
             if isinstance(timestamp, (int, float)) or str(timestamp).isdigit():
@@ -387,8 +672,13 @@ class ArticleLibrary:
             else:
                 date = normalize_date(timestamp)
                 source_row = "0"
+            if author.sync_since and date and date < author.sync_since:
+                continue
             row = {
-                "account": account,
+                "author_id": author.id,
+                "author_name": author.name,
+                "account": account["name"],
+                "account_username": account["username"],
                 "title": title,
                 "date": date,
                 "url": url,
@@ -396,29 +686,41 @@ class ArticleLibrary:
                 "source_file": "本机微信",
                 "source_row": source_row,
             }
-            if url in by_url:
-                by_url[url].update(row)
+            if url in by_url[author.id]:
+                by_url[author.id][url].update(row)
             else:
-                cached.append(row)
-                by_url[url] = row
-            matched += 1
+                caches[author.id].append(row)
+                by_url[author.id][url] = row
+            matched_by_author[author.id] += 1
 
-        cached.sort(key=lambda row: (row.get("date", ""), row.get("source_row", "")), reverse=True)
+        cached_counts: dict[str, int] = {}
         with CSV_LOCK:
-            write_csv_atomic(self.wechat_cache_path, WECHAT_CACHE_FIELDS, cached)
+            for author in self.authors:
+                caches[author.id].sort(
+                    key=lambda row: (row.get("date", ""), row.get("source_row", "")),
+                    reverse=True,
+                )
+                write_csv_atomic(
+                    self._wechat_cache_path(author.id),
+                    WECHAT_CACHE_FIELDS,
+                    caches[author.id],
+                )
+                cached_counts[author.id] = len(caches[author.id])
         result = {
             "available": True,
-            "synced": matched,
-            "cached": len(cached),
+            "synced": sum(matched_by_author.values()),
+            "synced_by_author": matched_by_author,
+            "cached": sum(cached_counts.values()),
+            "cached_by_author": cached_counts,
             "last_sync": synced_at,
             "warning": "",
         }
         with self._lock:
             self._wechat_sync = result
         LOGGER.info(
-            "本机微信公众号文章同步完成, matched:%d, cached:%d",
-            matched,
-            len(cached),
+            "本机微信公众号文章同步完成, matched:%s, cached:%s",
+            matched_by_author,
+            cached_counts,
         )
         return result
 
@@ -463,17 +765,23 @@ class ArticleLibrary:
         self._stop_event.set()
         self._executor.shutdown(wait=False, cancel_futures=False)
 
-    def _downloaded_maps(self) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
-        rows = read_csv(self.index_path)
+    def _downloaded_maps(
+        self, author_id: str
+    ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+        rows = read_csv(self._index_path(author_id))
         return (
             {row.get("url", ""): row for row in rows if row.get("url")},
-            {normalize_title(row.get("title", "")): row for row in rows if row.get("title")},
+            {
+                normalize_title(row.get("title", "")): row
+                for row in rows
+                if row.get("title")
+            },
         )
 
     def _download_status_maps(
-        self,
+        self, author_id: str
     ) -> tuple[dict[str, dict[str, str]], dict[tuple[str, str], dict[str, str]]]:
-        rows = read_csv(self.download_status_path)
+        rows = read_csv(self._status_path(author_id))
         return (
             {row.get("url", ""): row for row in rows if row.get("url")},
             {
@@ -504,16 +812,58 @@ class ArticleLibrary:
             return status_row["status"], ""
         return "missing", ""
 
-    def stats(self) -> dict[str, Any]:
+    def _status_context(
+        self,
+    ) -> dict[
+        str,
+        tuple[
+            dict[str, dict[str, str]],
+            dict[str, dict[str, str]],
+            dict[str, dict[str, str]],
+            dict[tuple[str, str], dict[str, str]],
+        ],
+    ]:
+        return {
+            author.id: (
+                *self._downloaded_maps(author.id),
+                *self._download_status_maps(author.id),
+            )
+            for author in self.authors
+        }
+
+    def _write_catalog(self, articles: list[InventoryArticle]) -> None:
+        context = self._status_context()
+        rows: list[dict[str, Any]] = []
+        for item in articles:
+            by_url, by_title, status_by_url, status_by_title = context[item.author_id]
+            status, local_path = self._status_for(
+                item,
+                by_url,
+                by_title,
+                status_by_url,
+                status_by_title,
+            )
+            row = asdict(item)
+            row.update({"status": status, "local_path": local_path})
+            rows.append(row)
+        with CSV_LOCK:
+            write_csv_atomic(self.catalog_path, CATALOG_FIELDS, rows)
+
+    def stats(self, author_id: str = "all") -> dict[str, Any]:
         with self._lock:
-            articles = list(self._articles)
+            articles = [
+                item
+                for item in self._articles
+                if author_id == "all" or item.author_id == author_id
+            ]
             refreshed_at = self._last_refresh
-        by_url, by_title = self._downloaded_maps()
-        status_by_url, status_by_title = self._download_status_maps()
+        context = self._status_context()
         status_counts = {"downloaded": 0, "missing": 0, "paid": 0, "failed": 0}
         account_counts: dict[str, int] = {}
+        author_counts: dict[str, int] = {}
         years: set[str] = set()
         for item in articles:
+            by_url, by_title, status_by_url, status_by_title = context[item.author_id]
             item_status, _ = self._status_for(
                 item,
                 by_url,
@@ -523,11 +873,21 @@ class ArticleLibrary:
             )
             status_counts[item_status] += 1
             account_counts[item.account] = account_counts.get(item.account, 0) + 1
+            author_counts[item.author_id] = author_counts.get(item.author_id, 0) + 1
             if len(item.date) >= 4:
                 years.add(item.date[:4])
         return {
             "total": len(articles),
             **status_counts,
+            "author_id": author_id,
+            "authors": [
+                {
+                    "id": author.id,
+                    "name": author.name,
+                    "count": author_counts.get(author.id, 0),
+                }
+                for author in self.authors
+            ],
             "accounts": account_counts,
             "years": sorted(years, reverse=True),
             "last_refresh": refreshed_at,
@@ -537,6 +897,7 @@ class ArticleLibrary:
 
     def list_articles(self, query: dict[str, list[str]]) -> dict[str, Any]:
         keyword = query.get("q", [""])[0].strip().lower()
+        author_id = query.get("author_id", ["all"])[0]
         account = query.get("account", ["all"])[0]
         year = query.get("year", ["all"])[0]
         status = query.get("status", ["all"])[0]
@@ -548,10 +909,10 @@ class ArticleLibrary:
 
         with self._lock:
             articles = list(self._articles)
-        by_url, by_title = self._downloaded_maps()
-        status_by_url, status_by_title = self._download_status_maps()
+        context = self._status_context()
         result: list[dict[str, Any]] = []
         for item in articles:
+            by_url, by_title, status_by_url, status_by_title = context[item.author_id]
             item_status, local_path = self._status_for(
                 item,
                 by_url,
@@ -560,6 +921,8 @@ class ArticleLibrary:
                 status_by_title,
             )
             if keyword and keyword not in f"{item.title} {item.summary} {item.account}".lower():
+                continue
+            if author_id != "all" and item.author_id != author_id:
                 continue
             if account != "all" and item.account != account:
                 continue
@@ -588,23 +951,31 @@ class ArticleLibrary:
         item = self.get_article(item_id)
         if not item:
             return None
-        by_url, by_title = self._downloaded_maps()
+        by_url, by_title = self._downloaded_maps(item.author_id)
         status, local_path = self._status_for(item, by_url, by_title)
         if status != "downloaded":
             return None
         path = (self.project_root / local_path).resolve()
         try:
-            path.relative_to(self.articles_dir.resolve())
+            path.relative_to(self._articles_dir(item.author_id).resolve())
         except ValueError:
             return None
         return path if path.is_file() else None
 
-    def submit_download(self, ids: list[str] | None = None, all_missing: bool = False) -> dict[str, Any]:
-        by_url, by_title = self._downloaded_maps()
-        status_by_url, status_by_title = self._download_status_maps()
+    def submit_download(
+        self,
+        ids: list[str] | None = None,
+        all_missing: bool = False,
+        author_id: str = "all",
+    ) -> dict[str, Any]:
+        context = self._status_context()
         if all_missing:
             with self._lock:
-                candidates = list(self._articles)
+                candidates = [
+                    item
+                    for item in self._articles
+                    if author_id == "all" or item.author_id == author_id
+                ]
         else:
             candidates = [
                 item
@@ -614,13 +985,7 @@ class ArticleLibrary:
         valid_ids = [
             item.id
             for item in candidates
-            if self._status_for(
-                item,
-                by_url,
-                by_title,
-                status_by_url,
-                status_by_title,
-            )[0]
+            if self._status_for(item, *context[item.author_id])[0]
             == "missing"
         ]
         if not valid_ids:
@@ -696,6 +1061,8 @@ class ArticleLibrary:
             current="",
             finished_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         )
+        with self._lock:
+            self._write_catalog(list(self._articles))
         job = self.get_job(job_id) or {}
         LOGGER.info(
             "下载任务完成, job_id:%s, succeeded:%d, paid:%d, failed:%d",
@@ -719,10 +1086,11 @@ class ArticleLibrary:
             raise PaidArticleError("付费文章，不下载正文")
         if "wappoc_appmsgcaptcha" in response.url or "环境异常" in soup.get_text(" ", strip=True):
             raise ValueError("微信访问触发验证，稍后重试")
-        content = extract_text(soup, "#js_content") or extract_text(soup, ".rich_media_content")
+        content_node = article_content_node(soup)
+        content = content_node.get_text("\n", strip=True) if content_node else ""
         source_url = normalize_wechat_url(original_article_url(page_html))
         if not content and source_url:
-            if is_paid_source_url(source_url):
+            if is_paid_source_url(source_url, self.paid_source_biz_ids):
                 raise PaidArticleError("源文章为“西风的指南”付费内容，不下载正文")
             source = urlparse(source_url)
             if source.scheme == "https" and source.hostname in WECHAT_HOSTS:
@@ -733,10 +1101,12 @@ class ArticleLibrary:
                 )
                 source_response = requests.get(source_url, headers=REQUEST_HEADERS, timeout=30)
                 source_response.raise_for_status()
+                page_html = source_response.text
                 soup = BeautifulSoup(source_response.text, "html.parser")
                 if is_paid_article(source_response.text, soup):
                     raise PaidArticleError("付费文章，不下载正文")
-                content = extract_text(soup, "#js_content") or extract_text(soup, ".rich_media_content")
+                content_node = article_content_node(soup)
+                content = content_node.get_text("\n", strip=True) if content_node else ""
 
         if not content or "此内容发送失败无法查看" in page_html[:1500]:
             raise ValueError("微信页面正文为空或已不可查看")
@@ -749,7 +1119,8 @@ class ArticleLibrary:
         body = "\n".join(
             [
                 f"标题: {title.strip()}",
-                "作者: 记忆承载",
+                f"作者: {item.author_name}",
+                f"公众号: {item.account}",
                 f"日期: {published_date}",
                 f"URL: {item.url}",
                 f"来源文件: {item.source_file}",
@@ -759,19 +1130,53 @@ class ArticleLibrary:
                 "",
             ]
         )
-        destination_dir = self.articles_dir / year
+        dual_storage = item.author_id in DUAL_STORAGE_AUTHOR_IDS and content_node is not None
+        if dual_storage:
+            markdown_body = markdown_document(
+                item,
+                title,
+                published_date,
+                content_as_markdown(content_node),
+            )
+            html_body = html_document(
+                item,
+                title,
+                published_date,
+                content_as_html(content_node),
+            )
+        destination_dir = self._articles_dir(item.author_id) / year
         destination_dir.mkdir(parents=True, exist_ok=True)
-        destination = destination_dir / f"{safe_name(published_date)}_{safe_name(title)}.txt"
+        suffix = ".md" if dual_storage else ".txt"
+        destination = destination_dir / f"{safe_name(published_date)}_{safe_name(title)}{suffix}"
 
         with CSV_LOCK:
             existing = self._existing_index_row(item)
+            old_path: Path | None = None
             if existing and existing.get("local_path"):
                 old_path = (self.project_root / existing["local_path"]).resolve()
-                if old_path.is_file():
+                if old_path.is_file() and not dual_storage:
                     destination = old_path
-            destination.write_text(body, encoding="utf-8")
+            if dual_storage:
+                html_dir = self._html_dir(item.author_id) / year
+                html_dir.mkdir(parents=True, exist_ok=True)
+                html_destination = html_dir / f"{safe_name(published_date)}_{safe_name(title)}.html"
+                destination.write_text(markdown_body, encoding="utf-8")
+                html_destination.write_text(html_body, encoding="utf-8")
+                if (
+                    old_path
+                    and old_path.suffix == ".txt"
+                    and old_path.is_file()
+                    and old_path.parent.resolve() == destination_dir.resolve()
+                ):
+                    old_path.unlink()
+            else:
+                destination.write_text(body, encoding="utf-8")
+            stored_body = markdown_body if dual_storage else body
             index_row = {
-                "account": "记忆承载",
+                "author_id": item.author_id,
+                "author_name": item.author_name,
+                "account": item.account,
+                "account_username": item.account_username,
                 "title": title.strip(),
                 "date": published_date,
                 "url": item.url,
@@ -779,12 +1184,24 @@ class ArticleLibrary:
                 "source_file": item.source_file,
                 "source_article_no": str(item.source_row),
                 "content_chars": str(len(content.strip())),
-                "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                "sha256": hashlib.sha256(stored_body.encode("utf-8")).hexdigest(),
             }
-            upsert_csv(self.index_path, INDEX_FIELDS, index_row)
-            upsert_csv(self.data_dir / f"download_report_{year}.csv", REPORT_FIELDS, index_row)
-            remove_csv_row(self.data_dir / f"download_failed_{year}.csv", FAILED_FIELDS, item.url)
-            remove_csv_row(self.download_status_path, DOWNLOAD_STATUS_FIELDS, item.url)
+            upsert_csv(self._index_path(item.author_id), INDEX_FIELDS, index_row)
+            upsert_csv(
+                self._reports_dir(item.author_id) / f"download_report_{year}.csv",
+                REPORT_FIELDS,
+                index_row,
+            )
+            remove_csv_row(
+                self._reports_dir(item.author_id) / f"download_failed_{year}.csv",
+                FAILED_FIELDS,
+                item.url,
+            )
+            remove_csv_row(
+                self._status_path(item.author_id),
+                DOWNLOAD_STATUS_FIELDS,
+                item.url,
+            )
 
         LOGGER.info(
             "文章下载成功, article_id:%s, account:%s, local_path:%s",
@@ -795,15 +1212,20 @@ class ArticleLibrary:
         return destination
 
     def _existing_index_row(self, item: InventoryArticle) -> dict[str, str] | None:
-        for row in read_csv(self.index_path):
-            if row.get("url") == item.url or normalize_title(row.get("title", "")) == normalize_title(item.title):
+        for row in read_csv(self._index_path(item.author_id)):
+            if row.get("url") == item.url or (
+                normalize_title(row.get("title", "")) == normalize_title(item.title)
+            ):
                 return row
         return None
 
     def _record_failure(self, item: InventoryArticle, error: str) -> None:
         year = item.date[:4] if item.date[:4].isdigit() else "unknown"
         row = {
+            "author_id": item.author_id,
+            "author_name": item.author_name,
             "account": item.account,
+            "account_username": item.account_username,
             "title": item.title,
             "date": item.date,
             "url": item.url,
@@ -812,11 +1234,18 @@ class ArticleLibrary:
             "error": error,
         }
         with CSV_LOCK:
-            upsert_csv(self.data_dir / f"download_failed_{year}.csv", FAILED_FIELDS, row)
+            upsert_csv(
+                self._reports_dir(item.author_id) / f"download_failed_{year}.csv",
+                FAILED_FIELDS,
+                row,
+            )
 
     def _record_download_status(self, item: InventoryArticle, status: str, error: str) -> None:
         row = {
+            "author_id": item.author_id,
+            "author_name": item.author_name,
             "account": item.account,
+            "account_username": item.account_username,
             "title": item.title,
             "date": item.date,
             "url": item.url,
@@ -825,7 +1254,7 @@ class ArticleLibrary:
             "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
         with CSV_LOCK:
-            upsert_csv(self.download_status_path, DOWNLOAD_STATUS_FIELDS, row)
+            upsert_csv(self._status_path(item.author_id), DOWNLOAD_STATUS_FIELDS, row)
 
 
 class ArticleLibraryHandler(BaseHTTPRequestHandler):
@@ -863,7 +1292,23 @@ class ArticleLibraryHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         try:
             if path == "/api/stats":
-                self._json(HTTPStatus.OK, {"success": True, "data": self.library.stats()})
+                author_id = query.get("author_id", ["all"])[0]
+                self._json(
+                    HTTPStatus.OK,
+                    {"success": True, "data": self.library.stats(author_id)},
+                )
+                return
+            if path == "/api/authors":
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "success": True,
+                        "data": [
+                            {"id": author.id, "name": author.name}
+                            for author in self.library.authors
+                        ],
+                    },
+                )
                 return
             if path == "/api/articles":
                 self._json(HTTPStatus.OK, {"success": True, "data": self.library.list_articles(query)})
@@ -906,6 +1351,7 @@ class ArticleLibraryHandler(BaseHTTPRequestHandler):
                 job = self.library.submit_download(
                     ids,
                     all_missing=payload.get("all_missing") is True,
+                    author_id=str(payload.get("author_id", "all")),
                 )
                 self._json(
                     HTTPStatus.ACCEPTED,

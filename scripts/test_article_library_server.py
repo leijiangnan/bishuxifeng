@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,53 @@ class ArticleLibraryTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "data").mkdir()
         (self.root / "web").mkdir()
+        (self.root / "config").mkdir()
+        (self.root / "config" / "authors.json").write_text(
+            json.dumps(
+                {
+                    "authors": [
+                        {
+                            "id": "jiyichengzai",
+                            "name": "记忆承载",
+                            "accounts": [
+                                {
+                                    "id": "jiyichengzai",
+                                    "name": "记忆承载",
+                                    "username": "gh_jiyi",
+                                    "biz": "biz_jiyi",
+                                },
+                                {
+                                    "id": "jiyichengzai3",
+                                    "name": "记忆承载3",
+                                    "username": "gh_jiyi3",
+                                    "biz": "biz_jiyi3",
+                                },
+                            ],
+                            "paid_source_biz_ids": ["MzY5MDQxMDY1Ng=="],
+                        },
+                        {
+                            "id": "maobidao",
+                            "name": "猫笔刀",
+                            "accounts": [
+                                {
+                                    "id": "maobidao",
+                                    "name": "猫笔刀",
+                                    "username": "gh_maobidao",
+                                    "biz": "biz_maobidao",
+                                }
+                            ],
+                            "paid_source_biz_ids": [],
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        for author_id in ("jiyichengzai", "maobidao"):
+            base = self.root / "data" / "authors" / author_id
+            for relative in ("articles", "index", "reports", "sources/imports"):
+                (base / relative).mkdir(parents=True)
         self._write_inventory()
         self.library = ArticleLibrary(self.root, refresh_seconds=60)
         self.library.load_inventory()
@@ -56,7 +104,15 @@ class ArticleLibraryTest(unittest.TestCase):
                 "https://example.com/not-wechat",
             ]
         )
-        workbook.save(self.root / "data" / "记忆承载.xlsx")
+        workbook.save(
+            self.root
+            / "data"
+            / "authors"
+            / "jiyichengzai"
+            / "sources"
+            / "imports"
+            / "记忆承载.xlsx"
+        )
 
         workbook = Workbook()
         sheet = workbook.active
@@ -70,19 +126,40 @@ class ArticleLibraryTest(unittest.TestCase):
                 "https://mp.weixin.qq.com/s/article-two",
             ]
         )
-        workbook.save(self.root / "data" / "记忆承载3.xlsx")
+        workbook.save(
+            self.root
+            / "data"
+            / "authors"
+            / "jiyichengzai"
+            / "sources"
+            / "imports"
+            / "记忆承载3.xlsx"
+        )
 
     def _write_index(self) -> None:
-        article_path = self.root / "data" / "articles" / "记忆承载" / "2026" / "article.txt"
+        article_path = (
+            self.root
+            / "data"
+            / "authors"
+            / "jiyichengzai"
+            / "articles"
+            / "2026"
+            / "article.txt"
+        )
         article_path.parent.mkdir(parents=True)
         article_path.write_text("正文", encoding="utf-8")
-        with (self.root / "data" / "articles_index.csv").open(
+        with (
+            self.root / "data" / "authors" / "jiyichengzai" / "index" / "articles.csv"
+        ).open(
             "w", encoding="utf-8-sig", newline=""
         ) as file:
             writer = csv.DictWriter(
                 file,
                 fieldnames=[
+                    "author_id",
+                    "author_name",
                     "account",
+                    "account_username",
                     "title",
                     "date",
                     "url",
@@ -96,7 +173,10 @@ class ArticleLibraryTest(unittest.TestCase):
             writer.writeheader()
             writer.writerow(
                 {
+                    "author_id": "jiyichengzai",
+                    "author_name": "记忆承载",
                     "account": "记忆承载",
+                    "account_username": "gh_jiyi",
                     "title": "测试文章一",
                     "date": "2026-10-20",
                     "url": "https://mp.weixin.qq.com/s/article-one",
@@ -129,6 +209,56 @@ class ArticleLibraryTest(unittest.TestCase):
         self.assertEqual(result["items"][0]["title"], "测试文章二")
         self.assertEqual(result["items"][0]["status"], "missing")
 
+    def test_filters_articles_by_author(self) -> None:
+        cache = (
+            self.root
+            / "data"
+            / "authors"
+            / "maobidao"
+            / "sources"
+            / "wechat_articles.csv"
+        )
+        with cache.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.DictWriter(
+                file,
+                fieldnames=[
+                    "author_id",
+                    "author_name",
+                    "account",
+                    "account_username",
+                    "title",
+                    "date",
+                    "url",
+                    "summary",
+                    "source_file",
+                    "source_row",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "author_id": "maobidao",
+                    "author_name": "猫笔刀",
+                    "account": "猫笔刀",
+                    "account_username": "gh_maobidao",
+                    "title": "猫笔刀测试文章",
+                    "date": "2026-10-21",
+                    "url": "https://mp.weixin.qq.com/s/maobidao-one",
+                    "summary": "摘要",
+                    "source_file": "本机微信",
+                    "source_row": "1792530000",
+                }
+            )
+        self.library.load_inventory()
+
+        result = self.library.list_articles({"author_id": ["maobidao"]})
+        stats = self.library.stats("maobidao")
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["author_name"], "猫笔刀")
+        self.assertEqual(stats["total"], 1)
+        self.assertEqual(stats["accounts"], {"猫笔刀": 1})
+
     def test_reports_downloaded_status_and_returns_only_archive_files(self) -> None:
         self._write_index()
 
@@ -145,17 +275,38 @@ class ArticleLibraryTest(unittest.TestCase):
             self.library.submit_download(["unknown"])
 
     def test_paid_and_failed_statuses_are_exposed_and_not_resubmitted(self) -> None:
-        with (self.root / "data" / "article_download_status.csv").open(
+        with (
+            self.root
+            / "data"
+            / "authors"
+            / "jiyichengzai"
+            / "index"
+            / "download_status.csv"
+        ).open(
             "w", encoding="utf-8-sig", newline=""
         ) as file:
             writer = csv.DictWriter(
                 file,
-                fieldnames=["account", "title", "date", "url", "status", "error", "updated_at"],
+                fieldnames=[
+                    "author_id",
+                    "author_name",
+                    "account",
+                    "account_username",
+                    "title",
+                    "date",
+                    "url",
+                    "status",
+                    "error",
+                    "updated_at",
+                ],
             )
             writer.writeheader()
             writer.writerow(
                 {
+                    "author_id": "jiyichengzai",
+                    "author_name": "记忆承载",
                     "account": "记忆承载",
+                    "account_username": "gh_jiyi",
                     "title": "测试文章一",
                     "date": "2026-10-20",
                     "url": "https://mp.weixin.qq.com/s/article-one",
@@ -175,13 +326,12 @@ class ArticleLibraryTest(unittest.TestCase):
     @patch("scripts.article_library_server.shutil.which", return_value="/opt/homebrew/bin/wx")
     @patch("scripts.article_library_server.subprocess.run")
     def test_syncs_target_articles_from_local_wechat(self, run, _which) -> None:
-        run.return_value.returncode = 0
-        run.return_value.stderr = ""
-        run.return_value.stdout = """
+        payload = """
         {
           "articles": [
             {
               "account": "记忆承载",
+              "account_username": "gh_jiyi",
               "title": "微信新增文章",
               "url": "https://mp.weixin.qq.com/s/new-from-wechat",
               "digest": "来自本机微信数据库",
@@ -197,6 +347,14 @@ class ArticleLibraryTest(unittest.TestCase):
           "meta": {"status": "ok"}
         }
         """
+        empty_payload = "[]"
+
+        def fake_run(command, **_kwargs):
+            result = Mock(returncode=0, stderr="")
+            result.stdout = payload if "gh_jiyi" in command else empty_payload
+            return result
+
+        run.side_effect = fake_run
 
         result = self.library.refresh_inventory(include_wechat=True)
         articles = self.library.list_articles({"q": ["微信新增文章"]})
@@ -205,7 +363,16 @@ class ArticleLibraryTest(unittest.TestCase):
         self.assertEqual(result["wechat"]["synced"], 1)
         self.assertEqual(articles["total"], 1)
         self.assertEqual(articles["items"][0]["source_file"], "本机微信")
-        self.assertTrue((self.root / "data" / "wechat_articles.csv").is_file())
+        self.assertTrue(
+            (
+                self.root
+                / "data"
+                / "authors"
+                / "jiyichengzai"
+                / "sources"
+                / "wechat_articles.csv"
+            ).is_file()
+        )
 
     @patch("scripts.article_library_server.shutil.which", return_value="/opt/homebrew/bin/wx")
     @patch("scripts.article_library_server.subprocess.run")
@@ -291,6 +458,82 @@ class ArticleLibraryTest(unittest.TestCase):
         self.assertTrue(path.is_file())
         self.assertIn("完整正文", path.read_text(encoding="utf-8"))
         self.assertEqual(get.call_args_list[1].args[0], "https://mp.weixin.qq.com/s/source-article")
+
+    @patch("scripts.article_library_server.requests.get")
+    def test_saves_maobidao_articles_as_markdown_and_html(self, get) -> None:
+        cache = (
+            self.root
+            / "data"
+            / "authors"
+            / "maobidao"
+            / "sources"
+            / "wechat_articles.csv"
+        )
+        with cache.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.DictWriter(
+                file,
+                fieldnames=[
+                    "author_id",
+                    "author_name",
+                    "account",
+                    "account_username",
+                    "title",
+                    "date",
+                    "url",
+                    "summary",
+                    "source_file",
+                    "source_row",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "author_id": "maobidao",
+                    "author_name": "猫笔刀",
+                    "account": "猫笔刀",
+                    "account_username": "gh_maobidao",
+                    "title": "猫笔刀配图文章",
+                    "date": "2026-10-21",
+                    "url": "https://mp.weixin.qq.com/s/maobidao-image",
+                    "summary": "",
+                    "source_file": "本机微信",
+                    "source_row": "1792592421",
+                }
+            )
+        self.library.load_inventory()
+        response = Mock()
+        response.text = (
+            '<h1 id="activity-name">猫笔刀配图文章</h1>'
+            '<em id="publish_time">2026-10-21</em>'
+            '<div id="js_content"><p>正文第一段</p>'
+            '<img data-src="https://mmbiz.qpic.cn/example.jpg"></div>'
+        )
+        response.url = "https://mp.weixin.qq.com/s/maobidao-image"
+        response.raise_for_status.return_value = None
+        get.return_value = response
+
+        item = self.library.list_articles({"q": ["猫笔刀配图文章"]})["items"][0]
+        path = self.library._download_one(self.library.get_article(item["id"]))
+        html_path = (
+            self.root
+            / "data"
+            / "authors"
+            / "maobidao"
+            / "html"
+            / "2026"
+            / "2026-10-21_猫笔刀配图文章.html"
+        )
+
+        self.assertEqual(path.suffix, ".md")
+        self.assertTrue(html_path.is_file())
+        self.assertIn(
+            "![图片](https://mmbiz.qpic.cn/example.jpg)",
+            path.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            'src="https://mmbiz.qpic.cn/example.jpg"',
+            html_path.read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":

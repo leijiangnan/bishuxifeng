@@ -2,9 +2,9 @@
 
 ## 项目定位
 
-这个项目是“记忆承载”公众号作者的文章语料库与本地知识工程。
+这个项目是多位微信公众号作者的文章语料库与本地知识工程。当前维护“记忆承载”和“猫笔刀”两位作者。
 
-项目目标不是简单保存网页，而是逐步把这个工程建设成一个可长期更新、可检索、可引用、可对话的作者知识底座。后续当用户询问某个想法、观点、社会现象、人生选择、投资判断、职场问题、婚恋问题、教育问题或其他具体问题时，Agent 应优先基于本项目中收集的文章内容，模拟该作者的视角、知识储备、表达方式和分析框架进行回答。
+项目目标不是简单保存网页，而是逐步把这个工程建设成可长期更新、可检索、可引用、可对话的多作者知识底座。回答观点类问题时，应先确认目标作者，再基于对应作者目录中的文章模拟其视角、知识储备、表达方式和分析框架。
 
 重要边界：
 
@@ -15,33 +15,37 @@
 
 ## 目录结构
 
-核心数据在 `data/` 下：
+核心数据按作者隔离：
 
-- `data/articles/记忆承载/`：按年份保存的一篇一文件文章正文。
-- `data/articles_index.csv`：本地文章索引，记录标题、日期、URL、本地路径、内容长度、哈希等信息。
-- `data/*.xlsx`：原始文章全集清单，Excel 中包含文章标题、发布时间、链接等字段。
-- `data/wechat_articles.csv`：从本机微信数据库同步的公众号文章增量清单。
-- `data/article_download_status.csv`：未归档文章的处理状态，当前包括 `paid` 和 `failed`。
-- `data/download_report_年份.csv`：对应年份下载成功报告。
-- `data/download_failed_年份.csv`：对应年份下载失败清单。
-- `data/download_failed_all_years.csv`：所有年份失败文章汇总。
-- `data/download_summary_all_years.md`：全量下载进度汇总。
+- `config/authors.json`：作者、公众号名称、`gh_*` 标识、同步起始日期和付费源配置。
+- `data/authors/<author_id>/articles/`：按年份保存的一篇一文件文章正文。
+- `data/authors/<author_id>/html/`：按年份保存需要保留图文结构的 HTML 快照，当前用于猫笔刀。
+- `data/authors/<author_id>/index/articles.csv`：作者文章索引。
+- `data/authors/<author_id>/index/download_status.csv`：作者未归档文章状态。
+- `data/authors/<author_id>/sources/wechat_articles.csv`：从本机微信数据库同步的增量清单。
+- `data/authors/<author_id>/sources/imports/`：原始 Excel 等历史清单。
+- `data/authors/<author_id>/reports/`：年度下载成功、失败和汇总报告。
+- `data/authors/<author_id>/legacy/`：历史大 TXT 和旧整理产物。
+- `data/catalog/articles.csv`：由服务生成的全作者汇总索引，不手工编辑。
 - `scripts/article_library_server.py`：文章管理页后端，负责微信增量同步、文章检索、正文下载和状态维护。
+- `scripts/migrate_multi_author_layout.py`：从旧单作者结构迁移到多作者结构的一次性脚本。
 - `web/`：本地文章管理页，支持检索、筛选、原文跳转和批量下载。
 
-旧的大 TXT 文件 `data/crawled_articles*.txt` 是历史下载结果，已拆分为单篇文章文件。日常回答和后续维护应优先使用 `data/articles/记忆承载/` 与 `data/articles_index.csv`。
+旧的大 TXT 文件已移入对应作者的 `legacy/`。日常回答和后续维护应优先使用作者的 `articles/` 与 `index/articles.csv`。
 
 ## 当前数据状态
 
 截至 2026-10-22：
 
-- 作者目录统一为 `data/articles/记忆承载/`。
-- `记忆承载` 与 `记忆承载3` 两个公众号都视为同一作者来源。
-- 已下载文章按年份归档为单篇 TXT。
-- 每篇 TXT 头部包含 `标题`、`作者`、`日期`、`URL`、`来源文件`、`来源文章序号`。
-- 页面共维护 4,601 篇文章，其中 4,482 篇已归档，待下载为 0。
+- 记忆承载目录为 `data/authors/jiyichengzai/`，`记忆承载` 与 `记忆承载3` 两个公众号视为同一作者来源。
+- 猫笔刀目录为 `data/authors/maobidao/`，公众号账号为 `gh_ef5739a9d493`。
+- 已下载文章按年份归档为单篇文件；记忆承载历史正文为 TXT，猫笔刀正文为 Markdown，并额外保存 HTML 快照。
+- 每篇新正文头部包含 `标题`、`作者`、`公众号`、`日期`、`URL`、`来源文件`、`来源文章序号` 等来源信息。
+- 页面共维护 4,616 条目录记录，其中 4,495 篇已归档，待下载为 0。
+- 记忆承载有 4,601 条目录记录，其中 4,482 篇已归档。
 - 9 条引导记录指向已验证的付费源账号“西风的指南”，标记为 `paid`，不下载正文。
-- 110 篇文章因页面删除、链接失效、微信验证或正文不可公开访问而标记为 `failed`。
+- 记忆承载有 110 篇文章因页面删除、链接失效、微信验证或正文不可公开访问而标记为 `failed`。
+- 猫笔刀仅保留 2026-10-07 及之后 15 条目录记录；其中 13 篇正文已归档为 Markdown 与 HTML，2 篇已隐藏或不可公开查看。
 - 本机使用源码构建的 `wx-cli 0.6.3`，路径为 `~/.local/bin/wx`。旧 npm `0.3.0` 已卸载，不作为回退方案。
 
 以最新状态为准时，优先查看：
@@ -50,7 +54,7 @@
 curl -fsS http://127.0.0.1:8765/api/stats | python3 -m json.tool
 ```
 
-服务未启动时，检查 `data/articles_index.csv`、`data/wechat_articles.csv` 和 `data/article_download_status.csv`。
+服务未启动时，检查各作者的 `index/`、`sources/wechat_articles.csv` 和 `data/catalog/articles.csv`。
 
 ## 维护文章库
 
@@ -87,11 +91,12 @@ curl -fsS -X POST http://127.0.0.1:8765/api/downloads \
 处理规则：
 
 - 使用 `wx biz-articles` 读取本机微信已经接收的公众号推送。
-- 只保留 `记忆承载` 与 `记忆承载3`，并与历史 Excel 清单去重合并。
-- 普通文章保存到 `data/articles/记忆承载/年份/`，同步更新索引和年度报告。
+- 根据 `config/authors.json` 中的公众号 `gh_*` 标识精确归属作者，并与该作者的历史清单去重合并。
+- 普通文章保存到 `data/authors/<author_id>/articles/年份/`，同步更新作者索引和年度报告；猫笔刀文章因包含较多配图，同时保存 Markdown 正文和 `html/年份/` 下的 HTML 快照。
 - 微信页面直接返回付费标志，或外层引导页指向已验证的付费源账号“西风的指南”时，标记为 `paid`，保留原文链接，不下载正文。
 - 页面删除、链接失效、微信验证或正文不可公开访问的文章标记为 `failed`。
 - 批量任务只处理 `missing`，不会反复请求 `paid` 或 `failed`。
+- 页面和下载接口支持 `author_id`；指定作者时不得改动其他作者的状态。
 
 `wx-cli` 的源码目录为 `~/.local/src/wx-cli-again`。升级方式：
 
@@ -108,51 +113,20 @@ wx doctor --json
 
 ### 历史补下载
 
-当用户明确要求“从 Excel 下载微信公众号文章”“补下载某一年文章”时，使用已封装的 Skill：
+当用户明确要求“从 Excel 下载微信公众号文章”“补下载某一年文章”时，可以参考已封装的 Skill：
 
 - Skill 名称：`wechat-article-downloader`
 - 脚本路径：`~/.agents/skills/wechat-article-downloader/scripts/wechat_article_downloader.py`
 
-常用命令：
-
-```bash
-python3 ~/.agents/skills/wechat-article-downloader/scripts/wechat_article_downloader.py \
-  --project-root /Users/bytedance/my_github/bishuxifeng \
-  --year 2026
-```
-
-下载多个年份：
-
-```bash
-python3 ~/.agents/skills/wechat-article-downloader/scripts/wechat_article_downloader.py \
-  --project-root /Users/bytedance/my_github/bishuxifeng \
-  --years 2024,2025,2026
-```
-
-下载 Excel 中所有年份：
-
-```bash
-python3 ~/.agents/skills/wechat-article-downloader/scripts/wechat_article_downloader.py \
-  --project-root /Users/bytedance/my_github/bishuxifeng \
-  --all-years
-```
-
-大批量下载前建议先 dry-run：
-
-```bash
-python3 ~/.agents/skills/wechat-article-downloader/scripts/wechat_article_downloader.py \
-  --project-root /Users/bytedance/my_github/bishuxifeng \
-  --year 2026 \
-  --dry-run
-```
+该脚本假设旧版单作者目录，迁移后不要直接对项目根目录运行。需要使用时，先在临时目录按旧结构执行，再把结果合并到目标作者目录；合并前统计文件、索引和状态影响。日常补下载优先通过本地管理服务完成。
 
 下载后需要确认：
 
-- 新文章是否进入 `data/articles/记忆承载/年份/`。
-- `data/articles_index.csv` 是否更新。
-- `data/download_report_年份.csv` 是否生成。
-- `data/download_failed_年份.csv` 是否记录不可下载项。
-- `data/article_download_status.csv` 是否正确区分 `paid` 和 `failed`。
+- 新文章是否进入 `data/authors/<author_id>/articles/年份/`；猫笔刀还需确认 `data/authors/maobidao/html/年份/` 是否生成。
+- `data/authors/<author_id>/index/articles.csv` 是否更新。
+- `data/authors/<author_id>/reports/download_report_年份.csv` 是否生成。
+- `data/authors/<author_id>/reports/download_failed_年份.csv` 是否记录不可下载项。
+- `data/authors/<author_id>/index/download_status.csv` 是否正确区分 `paid` 和 `failed`。
 - 页面 `/api/stats` 中的 `downloaded`、`missing`、`paid`、`failed` 是否与文件状态一致。
 
 ## 回答问题时的工作流
@@ -160,7 +134,7 @@ python3 ~/.agents/skills/wechat-article-downloader/scripts/wechat_article_downlo
 当用户问“你怎么看”“作者怎么看”“按记忆承载的视角怎么看”“这个问题怎么理解”等观点类问题时，按以下流程处理：
 
 1. 先识别问题主题，例如职场、婚恋、教育、房产、投资、阶层流动、家庭关系、社会规则、个人选择、时代变化等。
-2. 在 `data/articles/记忆承载/` 中检索相关标题与正文，不要只凭记忆回答。
+2. 在目标作者的 `data/authors/<author_id>/articles/` 中检索相关标题与正文，不要跨作者混用，也不要只凭记忆回答。
 3. 优先引用与问题高度相关的文章，必要时结合多篇文章归纳。
 4. 将回答分成“文章库依据”“作者式推演”“给用户的结论或建议”。
 5. 如果找不到直接相关文章，要说明依据不足，并只做谨慎推演。
@@ -168,7 +142,7 @@ python3 ~/.agents/skills/wechat-article-downloader/scripts/wechat_article_downlo
 推荐检索方式：
 
 ```bash
-rg -n "关键词1|关键词2|关键词3" data/articles/记忆承载
+rg -n "关键词1|关键词2|关键词3" data/authors/<author_id>/articles
 ```
 
 也可以先查标题：
@@ -176,7 +150,9 @@ rg -n "关键词1|关键词2|关键词3" data/articles/记忆承载
 ```bash
 python3 - <<'PY'
 from pathlib import Path
-for p in Path("data/articles/记忆承载").glob("**/*.txt"):
+for p in Path("data/authors/<author_id>/articles").glob("**/*"):
+    if p.suffix not in {".txt", ".md"}:
+        continue
     text = p.read_text(encoding="utf-8", errors="ignore")
     title = text.splitlines()[0] if text else ""
     if "关键词" in title:
@@ -217,7 +193,7 @@ PY
 示例：
 
 ```text
-这个判断可以参考《某篇文章标题》，路径是 data/articles/记忆承载/2025/xxxx.txt。
+这个判断可以参考《某篇文章标题》，路径是 data/authors/<author_id>/articles/2025/xxxx.txt 或 xxxx.md。
 ```
 
 如果是综合多篇文章得到的风格化判断，要写清楚：
@@ -251,12 +227,12 @@ PY
 
 - 不删除原始 Excel。
 - 不随意删除历史大 TXT，除非用户明确要求。
-- 新下载文章继续放入 `data/articles/记忆承载/年份/`。
-- 保持一篇文章一个 TXT。
-- 更新文章后同步维护 `data/articles_index.csv`。
+- 新下载文章继续放入目标作者的 `data/authors/<author_id>/articles/年份/`。
+- 保持一篇文章一个正文文件；记忆承载历史正文为 TXT，猫笔刀正文为 Markdown 并配套 HTML 快照。
+- 更新文章后同步维护目标作者的 `index/articles.csv` 和全局 `data/catalog/articles.csv`。
 - 下载失败必须保留失败报告，不能静默忽略。
 - 不要把付费文章当作普通失败；只记录状态和原文链接，不尝试绕过付费限制。
-- 不要删除 `data/wechat_articles.csv` 和 `data/article_download_status.csv`，除非用户明确要求重建。
+- 不要删除作者目录中的 `sources/wechat_articles.csv` 和 `index/download_status.csv`，除非用户明确要求重建。
 - 如需重命名、合并、去重，先统计影响范围，再执行修改。
 
 ## 项目长期目标

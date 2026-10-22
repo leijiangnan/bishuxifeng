@@ -3,6 +3,7 @@ const state = {
   pages: 1,
   pageSize: 30,
   query: "",
+  authorId: "all",
   account: "all",
   year: "all",
   status: "all",
@@ -20,6 +21,7 @@ const elements = {
   refreshNote: document.querySelector("#refreshNote"),
   syncButton: document.querySelector("#syncButton"),
   searchInput: document.querySelector("#searchInput"),
+  authorFilter: document.querySelector("#authorFilter"),
   accountFilter: document.querySelector("#accountFilter"),
   yearFilter: document.querySelector("#yearFilter"),
   statusButtons: [...document.querySelectorAll("[data-status]")],
@@ -90,8 +92,8 @@ function setSelectOptions(select, values, firstLabel) {
   select.append(all);
   values.forEach((value) => {
     const option = document.createElement("option");
-    option.value = value;
-    option.textContent = value;
+    option.value = typeof value === "string" ? value : value.value;
+    option.textContent = typeof value === "string" ? value : value.label;
     select.append(option);
   });
   if ([...select.options].some((option) => option.value === selected)) {
@@ -100,7 +102,7 @@ function setSelectOptions(select, values, firstLabel) {
 }
 
 async function loadStats() {
-  const { data } = await api("/api/stats");
+  const { data } = await api(`/api/stats?author_id=${encodeURIComponent(state.authorId)}`);
   elements.totalMetric.textContent = formatCount(data.total);
   elements.downloadedMetric.textContent = formatCount(data.downloaded);
   elements.missingMetric.textContent = formatCount(data.missing);
@@ -113,6 +115,11 @@ async function loadStats() {
     ? `微信已同步 · ${formatRefresh(data.last_refresh)}`
     : `微信待授权 · ${formatRefresh(data.last_refresh)}`;
   elements.refreshNote.title = wechat.warning || "本机微信公众号文章同步正常";
+  setSelectOptions(
+    elements.authorFilter,
+    data.authors.map((author) => ({ value: author.id, label: author.name })),
+    "全部作者",
+  );
   setSelectOptions(elements.accountFilter, Object.keys(data.accounts), "全部公众号");
   setSelectOptions(elements.yearFilter, data.years, "全部年份");
 }
@@ -122,6 +129,7 @@ function buildQuery() {
     page: String(state.page),
     page_size: String(state.pageSize),
     q: state.query,
+    author_id: state.authorId,
     account: state.account,
     year: state.year,
     status: state.status,
@@ -206,6 +214,10 @@ function renderRows(items) {
     tag.textContent = item.account;
     account.append(tag);
 
+    const author = document.createElement("td");
+    author.className = "author-cell";
+    author.textContent = item.author_name;
+
     const status = document.createElement("td");
     status.className = "status-cell";
     const badge = document.createElement("span");
@@ -223,7 +235,7 @@ function renderRows(items) {
     actions.className = "action-cell";
     actions.append(actionButton(item));
 
-    row.append(date, article, account, status, actions);
+    row.append(date, article, author, account, status, actions);
     elements.articleRows.append(row);
   });
 }
@@ -334,6 +346,13 @@ elements.accountFilter.addEventListener("change", () => {
   loadArticles();
 });
 
+elements.authorFilter.addEventListener("change", async () => {
+  state.authorId = elements.authorFilter.value;
+  state.account = "all";
+  state.page = 1;
+  await refreshAll();
+});
+
 elements.yearFilter.addEventListener("change", () => {
   state.year = elements.yearFilter.value;
   state.page = 1;
@@ -367,7 +386,11 @@ elements.nextButton.addEventListener("click", () => {
 elements.downloadPageButton.addEventListener("click", () => {
   api("/api/downloads", {
     method: "POST",
-    body: JSON.stringify({ ids: [], all_missing: true }),
+    body: JSON.stringify({
+      ids: [],
+      all_missing: true,
+      author_id: state.authorId,
+    }),
   }).then((payload) => {
     state.activeJob = payload.data.id;
     state.jobDismissed = false;
