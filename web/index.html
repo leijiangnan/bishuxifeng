@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>记忆承载 · 文章库</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">记</div>
+      <div>
+        <h1>记忆承载</h1>
+        <p>双公众号文章库</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="refresh-note" id="refreshNote">正在读取目录</span>
+      <button class="button button-secondary" id="syncButton" type="button" title="重新读取文章清单">
+        <span aria-hidden="true">↻</span>
+        同步目录
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary-band" aria-label="文章库概览">
+      <div class="summary-inner">
+        <div class="summary-copy">
+          <p class="eyebrow">LOCAL ARCHIVE</p>
+          <h2>文章链接与本地归档</h2>
+          <p>共维护两个公众号的公开文章记录。</p>
+        </div>
+        <dl class="metrics">
+          <div>
+            <dt>全部文章</dt>
+            <dd id="totalMetric">—</dd>
+          </div>
+          <div>
+            <dt>已归档</dt>
+            <dd id="downloadedMetric">—</dd>
+          </div>
+          <div>
+            <dt>待下载</dt>
+            <dd id="missingMetric">—</dd>
+          </div>
+          <div>
+            <dt>归档率</dt>
+            <dd id="rateMetric">—</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="toolbar">
+        <label class="search-field">
+          <span class="sr-only">搜索标题或摘要</span>
+          <span aria-hidden="true">⌕</span>
+          <input id="searchInput" type="search" placeholder="搜索标题或摘要" autocomplete="off">
+        </label>
+        <div class="filters">
+          <label>
+            <span class="sr-only">公众号</span>
+            <select id="accountFilter" aria-label="按公众号筛选">
+              <option value="all">全部公众号</option>
+            </select>
+          </label>
+          <label>
+            <span class="sr-only">年份</span>
+            <select id="yearFilter" aria-label="按年份筛选">
+              <option value="all">全部年份</option>
+            </select>
+          </label>
+          <div class="segmented" aria-label="按归档状态筛选">
+            <button class="active" type="button" data-status="all">全部</button>
+            <button type="button" data-status="downloaded">已归档</button>
+            <button type="button" data-status="missing">待下载</button>
+            <button type="button" data-status="paid">付费</button>
+            <button type="button" data-status="failed">失败</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="result-bar">
+        <p><strong id="resultCount">0</strong> 篇文章</p>
+        <button class="button button-primary" id="downloadPageButton" type="button" disabled>
+          <span aria-hidden="true">↓</span>
+          下载全部待归档
+        </button>
+      </div>
+
+      <div class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th class="date-column">日期</th>
+              <th>文章</th>
+              <th class="account-column">公众号</th>
+              <th class="status-column">状态</th>
+              <th class="action-column"><span class="sr-only">操作</span></th>
+            </tr>
+          </thead>
+          <tbody id="articleRows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" hidden>
+          <div aria-hidden="true">文</div>
+          <h3>没有匹配的文章</h3>
+          <p>请调整搜索条件或筛选项。</p>
+        </div>
+        <div class="loading-state" id="loadingState">
+          <span class="spinner" aria-hidden="true"></span>
+          正在读取文章目录
+        </div>
+      </div>
+
+      <nav class="pagination" aria-label="文章分页">
+        <button id="previousButton" type="button" title="上一页" aria-label="上一页">←</button>
+        <span id="pageLabel">第 1 / 1 页</span>
+        <button id="nextButton" type="button" title="下一页" aria-label="下一页">→</button>
+      </nav>
+    </section>
+  </main>
+
+  <div class="job-panel" id="jobPanel" hidden aria-live="polite">
+    <div class="job-head">
+      <div>
+        <strong id="jobTitle">正在下载文章</strong>
+        <span id="jobCount">0 / 0</span>
+      </div>
+      <button id="closeJobButton" type="button" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="progress-track"><span id="jobProgress"></span></div>
+    <p id="jobCurrent"></p>
+  </div>
+
+  <div class="toast" id="toast" hidden role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
