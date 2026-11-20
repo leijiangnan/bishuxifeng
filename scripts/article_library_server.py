@@ -458,6 +458,9 @@ class ArticleLibrary:
     def _netease_cache_path(self, author_id: str) -> Path:
         return self._author_dir(author_id) / "sources" / "netease_articles.csv"
 
+    def _manual_cache_path(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "sources" / "manual_articles.csv"
+
     def _articles_dir(self, author_id: str) -> Path:
         return self._author_dir(author_id) / "articles"
 
@@ -592,6 +595,34 @@ class ArticleLibrary:
                         summary=str(row.get("summary", "")).strip(),
                         source_file=str(row.get("source_file", "")).strip()
                         or "网易号公开镜像",
+                        source_row=int(row.get("source_row", 0) or row_number),
+                    )
+                )
+
+            manual_path = self._manual_cache_path(author.id)
+            for row_number, row in enumerate(read_csv(manual_path), 2):
+                title = str(row.get("title", "")).strip()
+                url = str(row.get("url", "")).strip()
+                parsed_url = urlparse(url)
+                if (
+                    not title
+                    or parsed_url.scheme != "manual-import"
+                    or parsed_url.netloc != author.id
+                ):
+                    continue
+                append_article(
+                    InventoryArticle(
+                        id=article_id(url),
+                        author_id=author.id,
+                        author_name=author.name,
+                        account=str(row.get("account", "")).strip() or author.name,
+                        account_username=str(row.get("account_username", "")).strip(),
+                        title=title,
+                        date=normalize_date(row.get("date", "")),
+                        url=url,
+                        summary=str(row.get("summary", "")).strip(),
+                        source_file=str(row.get("source_file", "")).strip()
+                        or "手工导入",
                         source_row=int(row.get("source_row", 0) or row_number),
                     )
                 )
