@@ -33,6 +33,7 @@ from bs4 import BeautifulSoup
 LOGGER = logging.getLogger("article-library")
 CSV_LOCK = threading.RLock()
 WECHAT_HOSTS = {"mp.weixin.qq.com"}
+NETEASE_HOSTS = {"www.163.com", "m.163.com"}
 DUAL_STORAGE_AUTHOR_IDS = {"maobidao"}
 INDEX_FIELDS = [
     "author_id",
@@ -193,6 +194,23 @@ def extract_text(soup: BeautifulSoup, selector: str) -> str:
 
 def article_content_node(soup: BeautifulSoup) -> Any:
     return soup.select_one("#js_content") or soup.select_one(".rich_media_content")
+
+
+def netease_content_node(soup: BeautifulSoup) -> Any:
+    node = soup.select_one(".post_body")
+    if not node:
+        return None
+    for unwanted in node.select("script, style, .post_statement, .post_recommend"):
+        unwanted.decompose()
+    for text_node in node.find_all(
+        string=lambda value: value
+        and "关注公众号，西风的指南，方能阅读正文" in value
+    ):
+        parent = text_node.parent
+        text_node.extract()
+        if parent and not parent.get_text(" ", strip=True):
+            parent.decompose()
+    return node
 
 
 def normalize_content_images(node: Any) -> None:
@@ -437,6 +455,9 @@ class ArticleLibrary:
     def _wechat_cache_path(self, author_id: str) -> Path:
         return self._author_dir(author_id) / "sources" / "wechat_articles.csv"
 
+    def _netease_cache_path(self, author_id: str) -> Path:
+        return self._author_dir(author_id) / "sources" / "netease_articles.csv"
+
     def _articles_dir(self, author_id: str) -> Path:
         return self._author_dir(author_id) / "articles"
 
@@ -542,6 +563,35 @@ class ArticleLibrary:
                         url=url,
                         summary=str(row.get("summary", "")).strip(),
                         source_file=str(row.get("source_file", "")).strip() or "本机微信",
+                        source_row=int(row.get("source_row", 0) or row_number),
+                    )
+                )
+
+            netease_path = self._netease_cache_path(author.id)
+            for row_number, row in enumerate(read_csv(netease_path), 2):
+                title = str(row.get("title", "")).strip()
+                url = str(row.get("url", "")).strip()
+                account_name = str(row.get("account", "")).strip()
+                account_username = str(row.get("account_username", "")).strip()
+                account = (
+                    author.account_by_username(account_username)
+                    or author.account_by_name(account_name)
+                )
+                if not title or not account or urlparse(url).hostname not in NETEASE_HOSTS:
+                    continue
+                append_article(
+                    InventoryArticle(
+                        id=article_id(url),
+                        author_id=author.id,
+                        author_name=author.name,
+                        account=account["name"],
+                        account_username=account["username"],
+                        title=title,
+                        date=normalize_date(row.get("date", "")),
+                        url=url,
+                        summary=str(row.get("summary", "")).strip(),
+                        source_file=str(row.get("source_file", "")).strip()
+                        or "网易号公开镜像",
                         source_row=int(row.get("source_row", 0) or row_number),
                     )
                 )
@@ -1074,45 +1124,55 @@ class ArticleLibrary:
 
     def _download_one(self, item: InventoryArticle) -> Path:
         parsed = urlparse(item.url)
-        if parsed.scheme != "https" or parsed.hostname not in WECHAT_HOSTS:
-            raise ValueError("文章链接不是受支持的微信链接")
+        is_wechat = parsed.hostname in WECHAT_HOSTS
+        is_netease = parsed.hostname in NETEASE_HOSTS
+        if parsed.scheme != "https" or not (is_wechat or is_netease):
+            raise ValueError("文章链接不是受支持的微信或网易链接")
 
         LOGGER.info("开始下载文章, article_id:%s, account:%s, title:%s", item.id, item.account, item.title)
         response = requests.get(item.url, headers=REQUEST_HEADERS, timeout=30)
         response.raise_for_status()
         page_html = response.text
         soup = BeautifulSoup(page_html, "html.parser")
-        if is_paid_article(page_html, soup):
-            raise PaidArticleError("付费文章，不下载正文")
-        if "wappoc_appmsgcaptcha" in response.url or "环境异常" in soup.get_text(" ", strip=True):
-            raise ValueError("微信访问触发验证，稍后重试")
-        content_node = article_content_node(soup)
+        if is_netease:
+            content_node = netease_content_node(soup)
+        else:
+            if is_paid_article(page_html, soup):
+                raise PaidArticleError("付费文章，不下载正文")
+            if "wappoc_appmsgcaptcha" in response.url or "环境异常" in soup.get_text(" ", strip=True):
+                raise ValueError("微信访问触发验证，稍后重试")
+            content_node = article_content_node(soup)
         content = content_node.get_text("\n", strip=True) if content_node else ""
-        source_url = normalize_wechat_url(original_article_url(page_html))
-        if not content and source_url:
-            if is_paid_source_url(source_url, self.paid_source_biz_ids):
-                raise PaidArticleError("源文章为“西风的指南”付费内容，不下载正文")
-            source = urlparse(source_url)
-            if source.scheme == "https" and source.hostname in WECHAT_HOSTS:
-                LOGGER.info(
-                    "跟随阅读全文源链接, article_id:%s, source_url:%s",
-                    item.id,
-                    source_url,
-                )
-                source_response = requests.get(source_url, headers=REQUEST_HEADERS, timeout=30)
-                source_response.raise_for_status()
-                page_html = source_response.text
-                soup = BeautifulSoup(source_response.text, "html.parser")
-                if is_paid_article(source_response.text, soup):
-                    raise PaidArticleError("付费文章，不下载正文")
-                content_node = article_content_node(soup)
-                content = content_node.get_text("\n", strip=True) if content_node else ""
+        if is_wechat:
+            source_url = normalize_wechat_url(original_article_url(page_html))
+            if not content and source_url:
+                if is_paid_source_url(source_url, self.paid_source_biz_ids):
+                    raise PaidArticleError("源文章为“西风的指南”付费内容，不下载正文")
+                source = urlparse(source_url)
+                if source.scheme == "https" and source.hostname in WECHAT_HOSTS:
+                    LOGGER.info(
+                        "跟随阅读全文源链接, article_id:%s, source_url:%s",
+                        item.id,
+                        source_url,
+                    )
+                    source_response = requests.get(source_url, headers=REQUEST_HEADERS, timeout=30)
+                    source_response.raise_for_status()
+                    page_html = source_response.text
+                    soup = BeautifulSoup(source_response.text, "html.parser")
+                    if is_paid_article(source_response.text, soup):
+                        raise PaidArticleError("付费文章，不下载正文")
+                    content_node = article_content_node(soup)
+                    content = content_node.get_text("\n", strip=True) if content_node else ""
 
         if not content or "此内容发送失败无法查看" in page_html[:1500]:
             raise ValueError("微信页面正文为空或已不可查看")
 
-        title = extract_text(soup, "#activity-name") or extract_text(soup, ".rich_media_title") or item.title
-        published_date = normalize_date(extract_text(soup, "#publish_time")) or item.date
+        if is_netease:
+            title = extract_text(soup, "h1") or item.title
+            published_date = item.date
+        else:
+            title = extract_text(soup, "#activity-name") or extract_text(soup, ".rich_media_title") or item.title
+            published_date = normalize_date(extract_text(soup, "#publish_time")) or item.date
         year = published_date[:4] if published_date[:4].isdigit() else item.date[:4]
         if not year.isdigit():
             year = "未知年份"
